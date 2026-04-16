@@ -117,27 +117,6 @@ function New-UsuariosAdmin {
 
 
 function Set-DelegacionRBAC {
-    <#
-    Aplica permisos granulares con dsacls sobre las OUs Cuates y NoCuates.
-
-    ROL 1 - admin_identidad:
-      - Allow: CreateChild/DeleteChild User, Reset Password, Write (atributos basicos)
-      sobre OU=Cuates y OU=NoCuates
-
-    ROL 2 - admin_storage:
-      - Sin permisos en AD (su trabajo es FSRM, ya tiene acceso al servidor)
-      - Deny explicito: Reset Password sobre cualquier usuario en ambas OUs
-        (esto es lo que demuestra la restriccion critica en el Test 1)
-
-    ROL 3 - admin_politicas:
-      - Allow: ReadProperty en todo el dominio
-      - Allow: WriteProperty sobre objetos GPO (gestionado desde GPMC)
-        Se le agrega al grupo "Group Policy Creator Owners"
-
-    ROL 4 - admin_auditoria:
-      - Allow: ReadProperty en todo el dominio (solo lectura)
-      - Acceso al Security Event Log via wevtutil
-    #>
     Import-Module ActiveDirectory
 
     $ouCuates   = "OU=Cuates,$Global:DominioDN"
@@ -600,44 +579,7 @@ function Set-MultiOTPLockout {
         Write-Host "  Registro: $rp actualizado" -ForegroundColor Green
     }
 
-    # --- 3. Script de auto-desbloqueo a los 30 min ---
-    $unlockScript = @'
-$multiotpDir = "C:\Program Files\multiOTP"
-$lockoutMinutes = 30
-
-Get-ChildItem "$multiotpDir\users\*.db" | ForEach-Object {
-    $usuario = $_.BaseName
-    $minutosDesdeModif = (New-TimeSpan -Start $_.LastWriteTime -End (Get-Date)).TotalMinutes
-
-    # Verificar si esta bloqueado leyendo su .db
-    $contenido = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-    if ($contenido -match "Locked" -or $contenido -match "locked=1") {
-        if ($minutosDesdeModif -ge $lockoutMinutes) {
-            & "$multiotpDir\multiotp.exe" -unlock $usuario | Out-Null
-            Add-Content "C:\Scripts\mfa_unlock.log" "$(Get-Date) - Auto-desbloqueado: $usuario"
-        }
-    }
-}
-'@
-
-    $scriptPath = "C:\Scripts\mfa_autounlock.ps1"
-    New-Item -ItemType Directory -Path "C:\Scripts" -Force | Out-Null
-    $unlockScript | Out-File -FilePath $scriptPath -Encoding UTF8 -Force
-    Write-Host "  Script de auto-desbloqueo guardado en: $scriptPath" -ForegroundColor Green
-
-    # --- 4. Tarea programada cada 5 min (resolucion de ~30 min) ---
-    $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
-                 -Argument "-NonInteractive -WindowStyle Hidden -File `"$scriptPath`""
-    $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 5) -Once `
-                 -At (Get-Date)
-    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
-
-    Register-ScheduledTask -TaskName "multiOTP-AutoUnlock" `
-        -Action $action -Trigger $trigger -Settings $settings `
-        -RunLevel Highest -Force | Out-Null
-
-    Write-Host "  Tarea programada 'multiOTP-AutoUnlock' registrada (cada 5 min)." -ForegroundColor Green
-    Write-Host "`nLockout configurado: 3 intentos -> bloqueo 30 min -> desbloqueo automatico." -ForegroundColor Cyan
+    #Ahora se maneja con una tarea que desbloquea al usaurio si se cumple el periodo
 }
 
 function Show-EstadoMFA {
